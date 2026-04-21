@@ -16,6 +16,70 @@ PORT = int(os.environ.get("PORT", 8765))
 TICKERS_7 = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA"]
 TICKERS_ALL = ["QQQ"] + TICKERS_7
 
+NAMES = {
+    "QQQ":"纳斯达克ETF","AAPL":"苹果","MSFT":"微软","NVDA":"英伟达",
+    "AMZN":"亚马逊","GOOGL":"谷歌","META":"Meta","TSLA":"特斯拉"
+}
+
+# ─── AI 分析师点评生成 ──────────────────────────────────────────────────────
+def gen_commentary(ticker, MRS, TFS, TSS, CAS, rsi, price, tss_3m_wr, tss_3m_avg, tss_3m_n):
+    """根据信号值生成拟人化分析师点评"""
+    name = NAMES.get(ticker, ticker)
+
+    # 宏观判断
+    if MRS > 0.3:
+        macro = "宏观环境强劲偏多"
+    elif MRS > 0.1:
+        macro = "宏观环境温和偏多"
+    elif MRS > -0.1:
+        macro = "宏观环境中性，方向待定"
+    elif MRS > -0.3:
+        macro = "宏观环境偏空，需谨慎"
+    else:
+        macro = "宏观环境明显偏空，建议控制仓位"
+
+    # 趋势判断
+    if TFS > 0.5:
+        trend = "中期趋势强劲向上"
+    elif TFS > 0.2:
+        trend = "中期趋势偏多"
+    elif TFS > -0.2:
+        trend = "中期趋势中性"
+    else:
+        trend = "中期趋势向下"
+
+    # 情绪/时机判断
+    if TSS > 0.5:
+        timing = f"技术情绪极度悲观（RSI {rsi:.0f}），历史上这类超卖信号触发后 3 个月上涨概率高达 {tss_3m_wr}%，平均涨幅 {tss_3m_avg:+.1f}%，是不可多得的战略买点"
+        action = "【建议操作】当前为超卖买入窗口，可考虑分批建仓"
+    elif TSS > 0.3:
+        timing = f"技术情绪偏向悲观（RSI {rsi:.0f}），接近历史超卖区间，历史胜率 {tss_3m_wr}%"
+        action = "【建议操作】可观察是否进一步走弱，等待更佳买点确认"
+    elif TSS > -0.3:
+        timing = f"技术情绪中性（RSI {rsi:.0f}），无明显超买或超卖信号"
+        action = "【建议操作】持仓观望，等待信号明确"
+    elif TSS > -0.5:
+        timing = f"技术情绪偏向乐观（RSI {rsi:.0f}），市场情绪略有过热"
+        action = "【建议操作】不宜追高，可适当止盈部分仓位"
+    else:
+        timing = f"技术情绪过热（RSI {rsi:.0f}），市场短期涨幅较大，情绪透支"
+        action = "【建议操作】建议减仓或等待回调，避免高位追涨"
+
+    # 综合结论
+    pos_text = "满仓（100%）" if CAS > 0.3 else "七成仓（70%）" if CAS > 0 else "三成仓（30%）" if CAS > -0.3 else "空仓观望（0%）"
+
+    # MRS 熊市警告
+    bear_warning = ""
+    if MRS < -0.2:
+        bear_warning = " ⚠ 注意：当前宏观政权偏空（MRS 为负），TSS 超卖信号在此环境下历史失效率较高，建议降低仓位权重。"
+
+    commentary = (
+        f"{name}（{ticker}）· 今日信号解读｜${price:.2f}\n\n"
+        f"📊 {macro}，{trend}。{timing}。\n\n"
+        f"{action}，模型建议综合仓位：{pos_text}。{bear_warning}"
+    )
+    return commentary
+
 # ─── 工具函数 ────────────────────────────────────────────────────────────────
 def safe(v):
     if v is None or (isinstance(v, float) and math.isnan(v)):
@@ -111,7 +175,7 @@ def api_data():
         qqq_records = compute_signals(qqq, qqq, tnx_r, irx_r, hyg_r, lqd_r, vix_r)
         qqq_today   = qqq_records[-1] if qqq_records else {}
 
-        # 七巨头今日 TSS
+        # 七巨头今日 TSS + 点评
         stocks_today = []
         for tk in TICKERS_7:
             s   = cl[tk].dropna()
@@ -123,11 +187,21 @@ def api_data():
                                    vix.reindex(s.index,method='ffill'))
             if recs:
                 t = recs[-1]
+                # 历史胜率（快速计算近2年）
+                tss_wr = win_rate(recs[-500:],"TSS",0.3,"gt","fwd_3m")
+                comment = gen_commentary(
+                    tk, t["MRS"] or 0, t["TFS"] or 0, t["TSS"] or 0, t["CAS"] or 0,
+                    t["rsi"] or 50, t["price"] or 0,
+                    tss_wr["wr"], tss_wr["avg"], tss_wr["n"]
+                )
                 stocks_today.append({
                     "ticker": tk,
+                    "name": NAMES.get(tk, tk),
                     "price": t["price"],
-                    "MRS": t["MRS"], "TFS": t["TFS"], "TSS": t["TSS"],
+                    "MRS": t["MRS"], "TFS": t["TFS"], "TSS": t["TSS"], "CAS": t["CAS"],
                     "rsi": t["rsi"], "f2": t["f2"],
+                    "tss_3m_wr": tss_wr["wr"],
+                    "commentary": comment,
                 })
 
         # QQQ 历史（近52周）
@@ -159,37 +233,49 @@ def api_data():
         vix_now = safe(vix.dropna().iloc[-1])
         curve   = safe(cl["^TNX"].dropna().iloc[-1]-cl["^IRX"].dropna().iloc[-1])
 
+        # QQQ 整体点评
+        qqq_wr = win_rate(qqq_records[-500:],"TSS",0.3,"gt","fwd_3m")
+        qqq_commentary = gen_commentary(
+            "QQQ", MRS, TFS, TSS, CAS,
+            qqq_today.get("rsi") or 50,
+            qqq_today.get("price") or 0,
+            qqq_wr["wr"], qqq_wr["avg"], qqq_wr["n"]
+        )
+
         return jsonify({
-            "updated":      datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "qqq_price":    qqq_today.get("price"),
-            "qqq_change_1d":safe(qqq.iloc[-1]/qqq.iloc[-2]-1) if len(qqq)>1 else None,
-            "vix":          vix_now,
-            "curve_slope":  curve,
+            "updated":        datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "qqq_price":      qqq_today.get("price"),
+            "qqq_change_1d":  safe(qqq.iloc[-1]/qqq.iloc[-2]-1) if len(qqq)>1 else None,
+            "vix":            vix_now,
+            "curve_slope":    curve,
             "MRS": safe(MRS), "TFS": safe(TFS), "TSS": safe(TSS), "CAS": safe(CAS),
-            "position":     pos,
-            "triple":       triple,
-            "signal_label": signal_label,
-            "signal_color": signal_color,
-            "stocks":       stocks_today,
-            "history":      history,
+            "position":       pos,
+            "triple":         triple,
+            "signal_label":   signal_label,
+            "signal_color":   signal_color,
+            "qqq_commentary": qqq_commentary,
+            "stocks":         stocks_today,
+            "history":        history,
         })
     except Exception as e:
         return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
 
 
-# ─── 七巨头回测接口（带年份）────────────────────────────────────────────────
+# ─── 任意股票回测接口（支持搜索）────────────────────────────────────────────
 @app.route("/api/backtest/<ticker>")
 def api_backtest(ticker):
-    ticker = ticker.upper()
-    valid  = TICKERS_ALL
-    if ticker not in valid:
-        return jsonify({"error": "Unknown ticker"}), 400
+    ticker = ticker.upper().strip()
+    # 不再限制 ticker 范围，支持任意有效股票
     try:
         tickers_pull = [ticker,"QQQ","^TNX","^IRX","HYG","LQD","^VIX"]
         raw  = yf.download(tickers_pull, period="5y", interval="1d",
                            auto_adjust=True, progress=False)
         cl   = raw["Close"]
+        if ticker not in cl.columns:
+            return jsonify({"error": f"找不到股票代码 {ticker}，请确认输入正确"}), 404
         stock = cl[ticker].dropna()
+        if len(stock) < 300:
+            return jsonify({"error": f"{ticker} 历史数据不足，无法回测"}), 400
         qqq   = cl["QQQ"].reindex(stock.index, method='ffill')
         recs  = compute_signals(
             stock, qqq,
@@ -203,8 +289,8 @@ def api_backtest(ticker):
         for yr in [2022, 2023, 2024, 2025, None]:
             label = str(yr) if yr else "all"
             stats_by_year[label] = {
-                "TSS_buy_1m": win_rate(recs,"TSS",0.3,"gt","fwd_1m",yr),
-                "TSS_buy_3m": win_rate(recs,"TSS",0.3,"gt","fwd_3m",yr),
+                "TSS_buy_1m":  win_rate(recs,"TSS",0.3,"gt","fwd_1m",yr),
+                "TSS_buy_3m":  win_rate(recs,"TSS",0.3,"gt","fwd_3m",yr),
                 "MRS_bull_1m": win_rate(recs,"MRS",0.2,"gt","fwd_1m",yr),
                 "TFS_bull_1m": win_rate(recs,"TFS",0.2,"gt","fwd_1m",yr),
                 "MRS_bull_3m": win_rate(recs,"MRS",0.2,"gt","fwd_3m",yr),
@@ -213,14 +299,27 @@ def api_backtest(ticker):
                 "MRS_bull_1w": win_rate(recs,"MRS",0.2,"gt","fwd_1w",yr),
                 "TFS_bull_1w": win_rate(recs,"TFS",0.2,"gt","fwd_1w",yr),
             }
-        # 精简 records（只返回近260条）
         slim = [{"date":r["date"],"price":r["price"],
                  "MRS":r["MRS"],"TFS":r["TFS"],"TSS":r["TSS"],
                  "rsi":r["rsi"],"f1":r["f1"],"f2":r["f2"],
                  "fwd_1m":r["fwd_1m"],"fwd_3m":r["fwd_3m"],"fwd_1w":r["fwd_1w"]}
                 for r in recs[-260:]]
-        return jsonify({"ticker":ticker,"records":slim,"stats_by_year":stats_by_year,
-                        "today":recs[-1] if recs else {}})
+        today = recs[-1] if recs else {}
+        tss_wr = stats_by_year["all"]["TSS_buy_3m"]
+        commentary = gen_commentary(
+            ticker, today.get("MRS") or 0, today.get("TFS") or 0,
+            today.get("TSS") or 0, today.get("CAS") or 0,
+            today.get("rsi") or 50, today.get("price") or 0,
+            tss_wr["wr"], tss_wr["avg"], tss_wr["n"]
+        )
+        return jsonify({
+            "ticker": ticker,
+            "name": NAMES.get(ticker, ticker),
+            "records": slim,
+            "stats_by_year": stats_by_year,
+            "today": today,
+            "commentary": commentary,
+        })
     except Exception as e:
         return jsonify({"error":str(e),"trace":traceback.format_exc()}), 500
 
