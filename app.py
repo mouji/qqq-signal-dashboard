@@ -157,20 +157,38 @@ def win_rate(recs, sig, th, direction, fwd, year=None):
 @app.route("/api/data")
 def api_data():
     try:
-        tickers_pull = TICKERS_ALL + ["^TNX","^IRX","HYG","LQD","^VIX"]
-        raw  = yf.download(tickers_pull, period="3y", interval="1d",
-                           auto_adjust=True, progress=False)
-        cl   = raw["Close"]
-        qqq  = cl["QQQ"].dropna()
-        vix  = cl["^VIX"]
+        # 分批下载：股票 + 指数分开，避免 yfinance 多 ticker 列名问题
+        tickers_stocks = TICKERS_ALL + ["HYG","LQD"]
+        tickers_index  = ["^TNX","^IRX","^VIX"]
 
-        # QQQ 当前信号
-        q_last  = len(qqq)-1
-        tnx_r   = cl["^TNX"].reindex(qqq.index, method='ffill')
-        irx_r   = cl["^IRX"].reindex(qqq.index, method='ffill')
-        hyg_r   = cl["HYG"].reindex(qqq.index, method='ffill')
-        lqd_r   = cl["LQD"].reindex(qqq.index, method='ffill')
-        vix_r   = vix.reindex(qqq.index, method='ffill')
+        raw_s = yf.download(tickers_stocks, period="3y", interval="1d",
+                            auto_adjust=True, progress=False)
+        raw_i = yf.download(tickers_index,  period="3y", interval="1d",
+                            auto_adjust=True, progress=False)
+
+        cl_s = raw_s["Close"]
+        cl_i = raw_i["Close"]
+
+        # 统一 columns（yfinance 新版可能返回 MultiIndex）
+        def flatten_cols(df):
+            if hasattr(df.columns, 'levels'):
+                df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+            return df
+        cl_s = flatten_cols(cl_s)
+        cl_i = flatten_cols(cl_i)
+
+        qqq = cl_s["QQQ"].dropna()
+        vix = cl_i.get("^VIX", cl_i.get("VIX", cl_i.iloc[:,2] if cl_i.shape[1]>2 else cl_i.iloc[:,0]))
+        tnx = cl_i.get("^TNX", cl_i.get("TNX", cl_i.iloc[:,0]))
+        irx = cl_i.get("^IRX", cl_i.get("IRX", cl_i.iloc[:,1] if cl_i.shape[1]>1 else cl_i.iloc[:,0]))
+        hyg = cl_s.get("HYG", cl_s.iloc[:,0])
+        lqd = cl_s.get("LQD", cl_s.iloc[:,0])
+
+        tnx_r = tnx.reindex(qqq.index, method='ffill')
+        irx_r = irx.reindex(qqq.index, method='ffill')
+        hyg_r = hyg.reindex(qqq.index, method='ffill')
+        lqd_r = lqd.reindex(qqq.index, method='ffill')
+        vix_r = vix.reindex(qqq.index, method='ffill')
 
         qqq_records = compute_signals(qqq, qqq, tnx_r, irx_r, hyg_r, lqd_r, vix_r)
         qqq_today   = qqq_records[-1] if qqq_records else {}
@@ -178,13 +196,13 @@ def api_data():
         # 七巨头今日 TSS + 点评
         stocks_today = []
         for tk in TICKERS_7:
-            s   = cl[tk].dropna()
+            s   = cl_s[tk].dropna()
             recs = compute_signals(s, qqq.reindex(s.index, method='ffill'),
-                                   cl["^TNX"].reindex(s.index,method='ffill'),
-                                   cl["^IRX"].reindex(s.index,method='ffill'),
-                                   cl["HYG"].reindex(s.index,method='ffill'),
-                                   cl["LQD"].reindex(s.index,method='ffill'),
-                                   vix.reindex(s.index,method='ffill'))
+                                   tnx.reindex(s.index, method='ffill'),
+                                   irx.reindex(s.index, method='ffill'),
+                                   hyg.reindex(s.index, method='ffill'),
+                                   lqd.reindex(s.index, method='ffill'),
+                                   vix.reindex(s.index, method='ffill'))
             if recs:
                 t = recs[-1]
                 # 历史胜率（快速计算近2年）
@@ -230,10 +248,19 @@ def api_data():
 
         pos = 100 if CAS>0.3 else 70 if CAS>0 else 30 if CAS>-0.3 else 0
 
-        vix_now = safe(vix.dropna().iloc[-1])
-        curve   = safe(cl["^TNX"].dropna().iloc[-1]-cl["^IRX"].dropna().iloc[-1])
+        vix_now = safe(float(vix.dropna().iloc[-1])) if len(vix.dropna()) > 0 else None
+        curve   = None
+        try:
+            curve = safe(float(tnx.dropna().iloc[-1]) - float(irx.dropna().iloc[-1]))
+        except Exception:
+            curve = None
 
-        # QQQ 整体点评
+        qqq_change = None
+        try:
+            if len(qqq) > 1:
+                qqq_change = safe(float(qqq.iloc[-1])/float(qqq.iloc[-2])-1)
+        except Exception:
+            qqq_change = None
         qqq_wr = win_rate(qqq_records[-500:],"TSS",0.3,"gt","fwd_3m")
         qqq_commentary = gen_commentary(
             "QQQ", MRS, TFS, TSS, CAS,
@@ -245,7 +272,7 @@ def api_data():
         return jsonify({
             "updated":        datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
             "qqq_price":      qqq_today.get("price"),
-            "qqq_change_1d":  safe(qqq.iloc[-1]/qqq.iloc[-2]-1) if len(qqq)>1 else None,
+            "qqq_change_1d":  qqq_change,
             "vix":            vix_now,
             "curve_slope":    curve,
             "MRS": safe(MRS), "TFS": safe(TFS), "TSS": safe(TSS), "CAS": safe(CAS),
@@ -265,26 +292,34 @@ def api_data():
 @app.route("/api/backtest/<ticker>")
 def api_backtest(ticker):
     ticker = ticker.upper().strip()
-    # 不再限制 ticker 范围，支持任意有效股票
     try:
-        tickers_pull = [ticker,"QQQ","^TNX","^IRX","HYG","LQD","^VIX"]
-        raw  = yf.download(tickers_pull, period="5y", interval="1d",
-                           auto_adjust=True, progress=False)
-        cl   = raw["Close"]
-        if ticker not in cl.columns:
+        raw_s = yf.download([ticker,"QQQ","HYG","LQD"], period="5y", interval="1d",
+                            auto_adjust=True, progress=False)
+        raw_i = yf.download(["^TNX","^IRX","^VIX"], period="5y", interval="1d",
+                            auto_adjust=True, progress=False)
+
+        def flatten_cols(df):
+            if hasattr(df.columns, 'levels'):
+                df.columns = [c[0] if isinstance(c,tuple) else c for c in df.columns]
+            return df
+        cl_s = flatten_cols(raw_s["Close"])
+        cl_i = flatten_cols(raw_i["Close"])
+
+        if ticker not in cl_s.columns:
             return jsonify({"error": f"找不到股票代码 {ticker}，请确认输入正确"}), 404
-        stock = cl[ticker].dropna()
+
+        stock = cl_s[ticker].dropna()
         if len(stock) < 300:
             return jsonify({"error": f"{ticker} 历史数据不足，无法回测"}), 400
-        qqq   = cl["QQQ"].reindex(stock.index, method='ffill')
-        recs  = compute_signals(
-            stock, qqq,
-            cl["^TNX"].reindex(stock.index, method='ffill'),
-            cl["^IRX"].reindex(stock.index, method='ffill'),
-            cl["HYG"].reindex(stock.index, method='ffill'),
-            cl["LQD"].reindex(stock.index, method='ffill'),
-            cl["^VIX"].reindex(stock.index, method='ffill'),
-        )
+
+        qqq = cl_s["QQQ"].reindex(stock.index, method='ffill')
+        hyg = cl_s.get("HYG", cl_s.iloc[:,0]).reindex(stock.index, method='ffill')
+        lqd = cl_s.get("LQD", cl_s.iloc[:,0]).reindex(stock.index, method='ffill')
+        tnx = cl_i.get("^TNX", cl_i.get("TNX", cl_i.iloc[:,0])).reindex(stock.index, method='ffill')
+        irx = cl_i.get("^IRX", cl_i.get("IRX", cl_i.iloc[:,0])).reindex(stock.index, method='ffill')
+        vix = cl_i.get("^VIX", cl_i.get("VIX", cl_i.iloc[:,0])).reindex(stock.index, method='ffill')
+
+        recs = compute_signals(stock, qqq, tnx, irx, hyg, lqd, vix)
         stats_by_year = {}
         for yr in [2022, 2023, 2024, 2025, None]:
             label = str(yr) if yr else "all"
