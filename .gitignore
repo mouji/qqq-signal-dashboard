@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+.venv
+venv/
+mag7*.json
+msft*.json
+!railway.json
+!requirements.txt
+.DS_Store

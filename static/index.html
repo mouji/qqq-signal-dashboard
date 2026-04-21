@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>七巨头三层信号仪表盘</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:-apple-system,"PingFang SC",sans-serif;background:#0f1117;color:#e0e0e0;font-size:13px;line-height:1.6;}
+.nav{background:#161b27;border-bottom:1px solid #2a3040;padding:0 24px;display:flex;align-items:center;height:52px;flex-wrap:wrap;}
+.nav-brand{font-size:15px;font-weight:700;color:#4a9eff;margin-right:24px;white-space:nowrap;}
+.nav-item{padding:0 14px;height:52px;display:flex;align-items:center;cursor:pointer;font-size:13px;color:#8a9bb5;border-bottom:2px solid transparent;transition:all .2s;white-space:nowrap;}
+.nav-item:hover{color:#ddd;}
+.nav-item.active{color:#4a9eff;border-bottom-color:#4a9eff;}
+.nav-right{margin-left:auto;display:flex;align-items:center;gap:10px;}
+.refresh-btn{padding:6px 14px;border-radius:6px;background:#1e2535;border:1px solid #2a3040;color:#8a9bb5;cursor:pointer;font-size:12px;}
+.refresh-btn:hover{background:#2a3040;color:#ddd;}
+.refresh-btn.loading{opacity:.5;pointer-events:none;}
+.spinner{display:none;width:14px;height:14px;border:2px solid #2a3040;border-top-color:#4a9eff;border-radius:50%;animation:spin .7s linear infinite;margin-right:6px;}
+@keyframes spin{to{transform:rotate(360deg)}}
+.last-upd{font-size:11px;color:#555;}
+.page{display:none;padding:20px 24px 60px;max-width:1280px;margin:0 auto;}
+.page.active{display:block;}
+/* cards */
+.card{background:#161b27;border:1px solid #2a3040;border-radius:10px;padding:18px 20px;margin-bottom:14px;}
+.card-title{font-size:13px;font-weight:700;margin-bottom:3px;}
+.card-sub{font-size:11.5px;color:#8a9bb5;margin-bottom:12px;line-height:1.6;}
+/* kv */
+.kv-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;}
+.kv{background:#1e2535;border:1px solid #2a3040;border-radius:8px;padding:10px 14px;flex:1;min-width:105px;}
+.kv-label{font-size:10px;color:#8a9bb5;margin-bottom:3px;}
+.kv-val{font-size:20px;font-weight:700;}
+/* gauge */
+.gauge-wrap{display:flex;align-items:center;gap:20px;margin-bottom:14px;}
+.gauge-box{position:relative;width:180px;flex-shrink:0;}
+.gauge-pos{text-align:center;margin-top:-30px;font-size:28px;font-weight:800;}
+.gauge-label{text-align:center;font-size:11px;color:#8a9bb5;margin-top:2px;}
+/* monitor */
+.monitor-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px;}
+@media(max-width:900px){.monitor-grid{grid-template-columns:repeat(2,1fr);}}
+.mc{border-radius:10px;padding:14px;border:2px solid;cursor:default;}
+.mc-ticker{font-size:13px;font-weight:700;margin-bottom:1px;}
+.mc-name{font-size:10px;color:#8a9bb5;margin-bottom:7px;}
+.mc-tss{font-size:28px;font-weight:800;line-height:1;}
+.mc-lbl{font-size:11px;font-weight:600;margin-top:3px;}
+.mc-bar{height:4px;border-radius:2px;margin:7px 0;}
+.mc-btm{display:flex;justify-content:space-between;padding-top:6px;border-top:1px solid rgba(255,255,255,.07);}
+.s-buy{border-color:#f39c12;background:rgba(243,156,18,.07);}
+.s-hold{border-color:#2a3040;background:#161b27;}
+.s-sell{border-color:#9b59b6;background:rgba(155,89,182,.06);}
+.c-buy{color:#f39c12;} .c-hold{color:#8a9bb5;} .c-sell{color:#9b59b6;}
+/* tabs */
+.stk-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;}
+.stk-tab{padding:7px 14px;border-radius:16px;cursor:pointer;font-size:12px;font-weight:600;border:1px solid #2a3040;background:#161b27;color:#8a9bb5;transition:all .2s;}
+/* wr */
+.wr-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px;}
+@media(max-width:700px){.wr-grid{grid-template-columns:1fr;}}
+.wr-card{background:#161b27;border:1px solid #2a3040;border-radius:10px;padding:14px 16px;}
+.wr-cname{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px;}
+.wr-row{display:flex;align-items:center;gap:7px;padding:4px 0;border-bottom:1px solid #1e2535;}
+.wr-row:last-child{border-bottom:none;}
+.wr-lbl{font-size:11px;color:#aaa;width:95px;flex-shrink:0;}
+.wr-bg{flex:1;background:#1e2535;border-radius:3px;height:6px;overflow:hidden;}
+.wr-fill{height:100%;border-radius:3px;}
+.wr-pct{width:38px;text-align:right;font-size:13px;font-weight:700;}
+.wr-avg{width:52px;text-align:right;font-size:10px;color:#8a9bb5;}
+/* year */
+.year-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:14px;}
+@media(max-width:700px){.year-grid{grid-template-columns:repeat(2,1fr);}}
+.yr-card{background:#161b27;border:1px solid #2a3040;border-radius:8px;padding:11px 14px;}
+.yr-card.yr2022{border-left:3px solid #e74c3c;}
+.yr-label{font-size:10px;color:#8a9bb5;font-weight:600;text-transform:uppercase;margin-bottom:6px;}
+.yr-wr{font-size:24px;font-weight:800;}
+.yr-detail{font-size:10px;color:#8a9bb5;margin-top:2px;}
+.yr-bar{height:4px;border-radius:2px;margin-top:7px;}
+/* insight */
+.insight{background:#1a2035;border-left:3px solid;padding:12px 16px;border-radius:0 6px 6px 0;font-size:12px;line-height:1.8;color:#c5cfe0;margin-bottom:14px;}
+/* compare */
+.cmp-table{width:100%;border-collapse:collapse;font-size:12px;}
+.cmp-table thead tr{background:#1e2535;}
+.cmp-table th{padding:8px 12px;text-align:center;color:#8a9bb5;font-weight:600;font-size:11px;}
+.cmp-table td{padding:7px 12px;border-bottom:1px solid #1e2535;text-align:center;}
+.cmp-table tr:hover td{background:#1a2035;cursor:pointer;}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;}
+/* loading overlay */
+.loading-overlay{display:none;position:fixed;inset:0;background:rgba(15,17,23,.8);z-index:100;align-items:center;justify-content:center;flex-direction:column;gap:16px;}
+.loading-overlay.show{display:flex;}
+.ld-spinner{width:40px;height:40px;border:3px solid #2a3040;border-top-color:#4a9eff;border-radius:50%;animation:spin .8s linear infinite;}
+.ld-text{font-size:13px;color:#8a9bb5;}
+/* grid helpers */
+.GRID{color:'#1e2535';}
+</style>
+</head>
+<body>
+
+<!-- loading -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="ld-spinner"></div>
+  <div class="ld-text" id="loadingText">正在从 Yahoo Finance 拉取数据...</div>
+</div>
+
+<!-- nav -->
+<nav class="nav">
+  <div class="nav-brand">📊 信号仪表盘</div>
+  <div class="nav-item active" onclick="showPage('dashboard')">今日总览</div>
+  <div class="nav-item" onclick="showPage('monitor')">TSS 监控</div>
+  <div class="nav-item" onclick="showPage('backtest')">回测详情</div>
+  <div class="nav-right">
+    <div class="spinner" id="spinner"></div>
+    <button class="refresh-btn" id="refreshBtn" onclick="loadData()">⟳ 刷新数据</button>
+    <span class="last-upd" id="lastUpd"></span>
+  </div>
+</nav>
+
+<!-- ═══════ Page 1: 今日总览 ═══════ -->
+<div class="page active" id="page-dashboard">
+  <div class="kv-row" id="kvRow"></div>
+
+  <div style="display:grid;grid-template-columns:220px 1fr;gap:14px;margin-bottom:14px;" id="topGrid">
+    <div class="card" style="margin:0;">
+      <div class="card-title">建议仓位</div>
+      <div class="card-sub">基于 CAS 综合得分</div>
+      <canvas id="gaugeChart"></canvas>
+      <div class="gauge-pos" id="posText">—</div>
+      <div class="gauge-label" id="signalLabel">加载中...</div>
+    </div>
+    <div class="card" style="margin:0;">
+      <div class="card-title">QQQ 三层信号历史走势</div>
+      <div class="card-sub">MRS（宏观蓝）、TFS（趋势绿）、TSS（情绪橙），虚线为 QQQ 价格</div>
+      <canvas id="histChart" height="95"></canvas>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">七巨头今日三层信号</div>
+    <div class="card-sub">点击卡片跳转到该股回测详情 · TSS > 0.3 橙色=超卖买入区 · TSS < -0.3 紫色=超买区</div>
+    <canvas id="stkBar" height="55"></canvas>
+  </div>
+</div>
+
+<!-- ═══════ Page 2: TSS 监控 ═══════ -->
+<div class="page" id="page-monitor">
+  <div class="insight" style="border-color:#e74c3c;" id="monitorInsight">
+    <b style="color:#e74c3c;">⚠ 2022 年熊市提醒</b>：TSS 超卖信号在 MRS &lt; -0.2（宏观空头）时大幅失效。
+    正确用法：<b>TSS 买入信号 + MRS &gt; -0.2</b> 同时成立才入场。
+  </div>
+  <div class="monitor-grid" id="monitorGrid"></div>
+  <div class="card">
+    <div class="card-title">TSS 强度横向对比</div>
+    <div class="card-sub">橙色 = 超卖（买入区），紫色 = 超买（减仓区），灰色 = 中性</div>
+    <canvas id="tssBarH" height="55"></canvas>
+  </div>
+</div>
+
+<!-- ═══════ Page 3: 回测详情 ═══════ -->
+<div class="page" id="page-backtest">
+  <div class="stk-tabs" id="stkTabs"></div>
+  <div class="insight" id="btInsight" style="border-color:#9b59b6;"></div>
+  <div class="wr-grid" id="wrGrid"></div>
+
+  <!-- 年度胜率 -->
+  <div class="card">
+    <div class="card-title">TSS 超卖信号胜率 · 分年度统计</div>
+    <div class="card-sub">红色左边框 = 2022 年熊市。对比各年差异，理解宏观环境影响。</div>
+    <div class="year-grid" id="yearGrid"></div>
+  </div>
+
+  <!-- 信号走势图 -->
+  <div class="card">
+    <div class="card-title" id="btChartTitle">信号历史走势</div>
+    <div class="card-sub">蓝=MRS 橙=TSS 虚线=价格 · 橙三角=TSS买入触发点</div>
+    <canvas id="btMainChart" height="95"></canvas>
+  </div>
+
+  <!-- 收益分布 -->
+  <div class="card">
+    <div class="card-title">TSS 触发后 vs 基准 1月收益分布</div>
+    <div class="card-sub">橙=TSS超卖触发后分布，蓝=所有日子基准。分布越偏右越好。</div>
+    <canvas id="btDistChart" height="80"></canvas>
+  </div>
+
+  <!-- 横向对比表 -->
+  <div class="card">
+    <div class="card-title">七巨头 TSS 胜率横向对比</div>
+    <div class="card-sub">点击任意行切换到该股票详情</div>
+    <table class="cmp-table">
+      <thead><tr>
+        <th>股票</th><th>触发次数</th>
+        <th>1周胜率</th><th>1周均收益</th>
+        <th>1月胜率</th><th>1月均收益</th>
+        <th>3月胜率</th><th>3月均收益</th>
+      </tr></thead>
+      <tbody id="cmpBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const API_BASE = '';  // 相对路径，同域部署
+const TICKERS  = ['QQQ','AAPL','MSFT','NVDA','AMZN','GOOGL','META','TSLA'];
+const NAMES    = {QQQ:'纳斯达克',AAPL:'苹果',MSFT:'微软',NVDA:'英伟达',AMZN:'亚马逊',GOOGL:'谷歌',META:'Meta',TSLA:'特斯拉'};
+const COLORS   = {QQQ:'#4a9eff',AAPL:'#a8c7fa',MSFT:'#5bc0f8',NVDA:'#76d97f',AMZN:'#f4a33d',GOOGL:'#ff6b6b',META:'#c77dff',TSLA:'#ff4d6d'};
+const YEARS    = ['2022','2023','2024','2025'];
+
+const GRID = {color:'#1e2535'};
+const TICK = {color:'#8a9bb5',maxTicksLimit:14,font:{size:10}};
+const LEG  = {position:'top',labels:{color:'#8a9bb5',font:{size:10},boxWidth:10,padding:8}};
+const fmtN = (v,d=2) => v==null?'—':Number(v).toFixed(d);
+const pct  = v => v==null?'—':(v>0?'+':'')+Number(v).toFixed(1)+'%';
+const wrClr= v => v>=70?'#2ecc71':v>=60?'#a8e063':v>=50?'#f39c12':v>=40?'#e67e22':'#e74c3c';
+
+let dashData  = null;
+let btCache   = {};
+let btCurrent = 'MSFT';
+let charts    = {};
+function dc(k){ if(charts[k]){try{charts[k].destroy();}catch(e){}} }
+
+// ── 导航 ─────────────────────────────────────────────
+function showPage(id){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  document.getElementById('page-'+id).classList.add('active');
+  event.currentTarget.classList.add('active');
+  if(id==='backtest' && !btCache[btCurrent]) loadBacktest(btCurrent);
+}
+
+// ── 加载主数据 ────────────────────────────────────────
+async function loadData(){
+  document.getElementById('loadingOverlay').classList.add('show');
+  document.getElementById('loadingText').textContent = '正在从 Yahoo Finance 拉取数据...';
+  document.getElementById('refreshBtn').classList.add('loading');
+  try {
+    const r = await fetch(API_BASE + '/api/data');
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    dashData = await r.json();
+    if(dashData.error) throw new Error(dashData.error);
+    renderDashboard();
+    renderMonitor();
+  } catch(e) {
+    alert('加载失败：'+e.message);
+  } finally {
+    document.getElementById('loadingOverlay').classList.remove('show');
+    document.getElementById('refreshBtn').classList.remove('loading');
+    document.getElementById('lastUpd').textContent = dashData?.updated ? '更新于 '+dashData.updated : '';
+  }
+}
+
+// ── 渲染总览页 ────────────────────────────────────────
+function renderDashboard(){
+  const d = dashData;
+  // KV 行
+  const chg = d.qqq_change_1d;
+  const items = [
+    {label:'QQQ 最新价', val:'$'+fmtN(d.qqq_price,2), color:'#e0e0e0'},
+    {label:'今日涨跌', val:pct(chg), color:chg>0?'#2ecc71':'#e74c3c'},
+    {label:'VIX 恐慌指数', val:fmtN(d.vix,1), color:d.vix>25?'#e74c3c':d.vix<15?'#2ecc71':'#f39c12'},
+    {label:'收益率曲线(10Y-3M)', val:(d.curve_slope>0?'+':'')+fmtN(d.curve_slope,2)+'%', color:d.curve_slope>0?'#2ecc71':'#e74c3c'},
+    {label:'MRS 宏观', val:fmtN(d.MRS,3), color:d.MRS>0.15?'#2ecc71':d.MRS<-0.15?'#e74c3c':'#f39c12'},
+    {label:'TFS 趋势', val:fmtN(d.TFS,3), color:d.TFS>0.15?'#2ecc71':d.TFS<-0.15?'#e74c3c':'#f39c12'},
+    {label:'TSS 情绪（逆向）', val:fmtN(d.TSS,3), color:d.TSS>0.3?'#f39c12':d.TSS<-0.3?'#9b59b6':'#8a9bb5'},
+    {label:'CAS 综合', val:fmtN(d.CAS,3), color:d.CAS>0.3?'#2ecc71':d.CAS<-0.3?'#e74c3c':'#f39c12'},
+  ];
+  document.getElementById('kvRow').innerHTML = items.map(it=>
+    `<div class="kv"><div class="kv-label">${it.label}</div><div class="kv-val" style="color:${it.color};">${it.val}</div></div>`
+  ).join('');
+
+  // 仓位
+  document.getElementById('posText').textContent  = d.position+'%';
+  document.getElementById('posText').style.color  = d.position>=70?'#2ecc71':d.position>=30?'#f39c12':'#e74c3c';
+  document.getElementById('signalLabel').textContent = d.signal_label;
+  dc('gauge');
+  charts.gauge = new Chart(document.getElementById('gaugeChart').getContext('2d'),{
+    type:'doughnut',
+    data:{datasets:[{
+      data:[d.position, 100-d.position],
+      backgroundColor:[d.position>=70?'#2ecc71':d.position>=30?'#f39c12':'#e74c3c','#1e2535'],
+      borderWidth:0,circumference:180,rotation:270,
+    }]},
+    options:{responsive:true,cutout:'70%',plugins:{legend:{display:false},tooltip:{enabled:false}}}
+  });
+
+  // 历史图
+  const hist = d.history;
+  const lbs  = hist.map(h=>h.date.slice(5));
+  dc('hist');
+  charts.hist = new Chart(document.getElementById('histChart').getContext('2d'),{
+    type:'line',
+    data:{labels:lbs, datasets:[
+      {label:'MRS',data:hist.map(h=>h.MRS),borderColor:'#4a9eff',borderWidth:2,fill:false,pointRadius:0,tension:0.3},
+      {label:'TFS',data:hist.map(h=>h.TFS),borderColor:'#2ecc71',borderWidth:2,fill:false,pointRadius:0,tension:0.3},
+      {label:'TSS',data:hist.map(h=>h.TSS),borderColor:'#f39c12',borderWidth:2,fill:false,pointRadius:0,tension:0.3},
+      {label:'QQQ价格',data:hist.map(h=>h.price),borderColor:'#8a9bb5',borderWidth:1.5,borderDash:[5,3],fill:false,pointRadius:0,tension:0.3,yAxisID:'y2'},
+    ]},
+    options:{responsive:true,plugins:{legend:LEG},scales:{
+      y:{min:-1.3,max:1.3,grid:GRID,ticks:TICK},
+      y2:{position:'right',grid:{drawOnChartArea:false},ticks:{...TICK,callback:v=>'$'+v}},
+      x:{grid:GRID,ticks:TICK}
+    }}
+  });
+
+  // 七巨头 TSS 横条
+  dc('stkBar');
+  const stks = d.stocks;
+  const vals = stks.map(s=>s.TSS||0);
+  const cols = vals.map(v=>v>0.3?'#f39c12':v<-0.3?'#9b59b6':'#3a4560');
+  charts.stkBar = new Chart(document.getElementById('stkBar').getContext('2d'),{
+    type:'bar',
+    data:{labels:stks.map(s=>s.ticker+' '+NAMES[s.ticker]),
+          datasets:[{data:vals,backgroundColor:cols,borderWidth:0,borderRadius:3}]},
+    options:{indexAxis:'y',responsive:true,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`TSS: ${c.parsed.x.toFixed(3)}`}}},
+      scales:{x:{min:-1.3,max:1.3,grid:GRID,ticks:TICK},y:{grid:{display:false},ticks:{color:'#8a9bb5',font:{size:11}}}}
+    }
+  });
+}
+
+// ── 渲染监控页 ────────────────────────────────────────
+function renderMonitor(){
+  if(!dashData) return;
+  const stks = dashData.stocks;
+  document.getElementById('monitorGrid').innerHTML = stks.map(s=>{
+    const tss = s.TSS||0;
+    const sc = tss>0.3?'s-buy':tss<-0.3?'s-sell':'s-hold';
+    const cc = tss>0.3?'c-buy':tss<-0.3?'c-sell':'c-hold';
+    const lbl = tss>0.5?'🟠 强超卖·买入':tss>0.3?'🟡 超卖·观察':tss>-0.3?'⬜ 中性·等待':tss>-0.5?'🟣 超买·减仓':'🔴 强超买·离场';
+    const barC= tss>0?'#f39c12':'#9b59b6';
+    const rsiC= (s.rsi||50)>70?'#e74c3c':(s.rsi||50)<30?'#2ecc71':'#8a9bb5';
+    return `<div class="mc ${sc}" onclick="switchBacktest('${s.ticker}')">
+      <div class="mc-ticker" style="color:${COLORS[s.ticker]};">${s.ticker}</div>
+      <div class="mc-name">${NAMES[s.ticker]}</div>
+      <div class="mc-tss ${cc}">${fmtN(tss,3)}</div>
+      <div class="mc-lbl ${cc}">${lbl}</div>
+      <div class="mc-bar" style="background:${barC};width:${Math.min(100,Math.abs(tss)*100)}%;"></div>
+      <div class="mc-btm">
+        <span style="color:${rsiC};font-size:11px;">RSI ${fmtN(s.rsi,0)}</span>
+        <span style="color:${COLORS[s.ticker]};font-size:11px;font-weight:600;">$${fmtN(s.price,1)}</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  dc('tssBarH');
+  const vals2 = stks.map(s=>s.TSS||0);
+  const cols2 = vals2.map(v=>v>0.3?'#f39c12':v<-0.3?'#9b59b6':'#3a4560');
+  charts.tssBarH = new Chart(document.getElementById('tssBarH').getContext('2d'),{
+    type:'bar',
+    data:{labels:stks.map(s=>s.ticker),
+          datasets:[{data:vals2,backgroundColor:cols2,borderWidth:0,borderRadius:4}]},
+    options:{indexAxis:'y',responsive:true,
+      plugins:{legend:{display:false}},
+      scales:{x:{min:-1.3,max:1.3,grid:GRID,ticks:TICK},y:{grid:{display:false},ticks:{color:'#8a9bb5',font:{size:11}}}}
+    }
+  });
+}
+
+// ── 回测详情 ─────────────────────────────────────────
+function switchBacktest(tk){
+  // 先切到回测页
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  document.getElementById('page-backtest').classList.add('active');
+  document.querySelectorAll('.nav-item')[2].classList.add('active');
+  loadBacktest(tk);
+}
+
+async function loadBacktest(tk){
+  btCurrent = tk;
+  // 更新 tab 高亮
+  document.querySelectorAll('.stk-tab').forEach(t=>{
+    t.classList.toggle('active',t.dataset.tk===tk);
+    if(t.dataset.tk===tk){t.style.background=COLORS[tk];t.style.color='#0f1117';}
+    else{t.style.background='#161b27';t.style.color='#8a9bb5';}
+  });
+
+  if(btCache[tk]){ renderBacktest(tk); return; }
+
+  document.getElementById('loadingOverlay').classList.add('show');
+  document.getElementById('loadingText').textContent = `正在计算 ${tk} 回测数据（约30秒）...`;
+  try {
+    const r = await fetch(API_BASE+'/api/backtest/'+tk);
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    btCache[tk] = await r.json();
+    if(btCache[tk].error) throw new Error(btCache[tk].error);
+    renderBacktest(tk);
+  } catch(e) {
+    alert('回测加载失败：'+e.message);
+  } finally {
+    document.getElementById('loadingOverlay').classList.remove('show');
+  }
+}
+
+function renderBacktest(tk){
+  const d = btCache[tk];
+  const by_yr = d.stats_by_year;
+  const all   = by_yr['all'];
+  const recs  = d.records;
+  const col   = COLORS[tk];
+  const t3    = all.TSS_buy_3m;
+  const t1    = all.TSS_buy_1m;
+  const today = d.today||{};
+
+  // insight
+  const tssNow = today.TSS;
+  const nowTip = tssNow>0.3
+    ? `<b style="color:#f39c12;">⚡ 当前 TSS=${fmtN(tssNow,2)}，正处于超卖买入区！</b>`
+    : tssNow<-0.3 ? `<b style="color:#9b59b6;">当前 TSS=${fmtN(tssNow,2)}，处于超买区，注意减仓。</b>` : '';
+  document.getElementById('btInsight').innerHTML =
+    `<b>${tk} · ${NAMES[tk]}</b>：TSS超卖信号 3月胜率 <b style="color:${wrClr(t3.wr)};">${t3.wr}%</b>，均收益 ${t3.avg>0?'+':''}${t3.avg}%（${t3.n}次）。1月胜率 ${t1.wr}%。${nowTip}`;
+
+  // 胜率卡
+  const WR_DEFS = [
+    {name:'MRS 宏观政权',color:'#4a9eff',rows:[
+      {label:'多头→1周',key:'MRS_bull_1w'},{label:'多头→1月',key:'MRS_bull_1m'},{label:'多头→3月',key:'MRS_bull_3m'},
+    ]},
+    {name:'TFS 趋势因子',color:'#2ecc71',rows:[
+      {label:'趋势↑→1周',key:'TFS_bull_1w'},{label:'趋势↑→1月',key:'TFS_bull_1m'},{label:'趋势↑→3月',key:'TFS_bull_3m'},
+    ]},
+    {name:'TSS 超卖买入',color:'#f39c12',rows:[
+      {label:'超卖→1周',key:'TSS_buy_1w'},{label:'超卖→1月',key:'TSS_buy_1m'},{label:'超卖→3月',key:'TSS_buy_3m'},
+    ]},
+  ];
+  document.getElementById('wrGrid').innerHTML = WR_DEFS.map(g=>{
+    const rows = g.rows.map(r=>{
+      const s=all[r.key]||{wr:0,avg:0,n:0}; const c=wrClr(s.wr);
+      return `<div class="wr-row">
+        <div class="wr-lbl">${r.label}</div>
+        <div class="wr-bg"><div class="wr-fill" style="width:${s.wr}%;background:${c};"></div></div>
+        <div class="wr-pct" style="color:${c};">${s.wr}%</div>
+        <div class="wr-avg">${s.avg>0?'+':''}${s.avg}%</div>
+      </div>`;
+    }).join('');
+    return `<div class="wr-card"><div class="wr-cname" style="color:${g.color};">${g.name}</div>${rows}</div>`;
+  }).join('');
+
+  // 年度卡
+  document.getElementById('yearGrid').innerHTML = [...YEARS,'all'].map(yr=>{
+    const s=(by_yr[yr]||{TSS_buy_3m:{wr:0,avg:0,n:0}}).TSS_buy_3m; const c=wrClr(s.wr);
+    return `<div class="yr-card ${yr==='2022'?'yr2022':''}">
+      <div class="yr-label" style="${yr==='2022'?'color:#e74c3c;':''}">${yr==='all'?'全部综合':yr+'年'}</div>
+      <div class="yr-wr" style="color:${c};">${s.wr}%</div>
+      <div class="yr-detail">均收益 ${s.avg>0?'+':''}${s.avg}% · ${s.n}次</div>
+      <div class="yr-bar" style="background:${c};width:${s.wr}%;"></div>
+    </div>`;
+  }).join('');
+
+  // 主走势图
+  const lbs    = recs.map(r=>r.date.slice(5));
+  const prices = recs.map(r=>r.price);
+  const mrs    = recs.map(r=>r.MRS);
+  const tss    = recs.map(r=>r.TSS);
+  const tss_pt = recs.map(r=>r.TSS>0.3?r.price:null);
+  document.getElementById('btChartTitle').textContent = `${tk} · MRS + TSS 信号历史走势`;
+  dc('btMain');
+  charts.btMain = new Chart(document.getElementById('btMainChart').getContext('2d'),{
+    type:'line',
+    data:{labels:lbs,datasets:[
+      {label:'MRS',data:mrs,borderColor:'#4a9eff',borderWidth:2,fill:false,pointRadius:0,tension:0.3},
+      {label:'TSS（逆向情绪）',data:tss,borderColor:'#f39c12',borderWidth:2,fill:false,pointRadius:0,tension:0.3},
+      {label:tk+'价格',data:prices,borderColor:col,borderWidth:1.5,borderDash:[5,3],fill:false,pointRadius:0,tension:0.3,yAxisID:'y2'},
+      {label:'TSS买点▲',data:tss_pt,type:'scatter',pointStyle:'triangle',pointRadius:7,backgroundColor:'#f39c12',borderColor:'#fff',borderWidth:1,yAxisID:'y2'},
+    ]},
+    options:{responsive:true,plugins:{legend:LEG},scales:{
+      y:{min:-1.3,max:1.3,grid:GRID,ticks:TICK},
+      y2:{position:'right',grid:{drawOnChartArea:false},ticks:{...TICK,callback:v=>'$'+v}},
+      x:{grid:GRID,ticks:TICK}
+    }}
+  });
+
+  // 收益分布
+  const bins=[-0.25,-0.20,-0.15,-0.10,-0.05,0,0.05,0.10,0.15,0.20,0.25,0.30];
+  const bLbls=bins.slice(0,-1).map((b,i)=>`${(b*100).toFixed(0)}%`);
+  function hist(vals){const c=new Array(bins.length-1).fill(0);for(const v of vals){for(let i=0;i<bins.length-1;i++){if(v>=bins[i]&&v<bins[i+1]){c[i]++;break;}}}return c;}
+  const af=recs.map(r=>r.fwd_1m).filter(v=>v!=null);
+  const tf=recs.filter(r=>r.TSS>0.3).map(r=>r.fwd_1m).filter(v=>v!=null);
+  dc('btDist');
+  charts.btDist = new Chart(document.getElementById('btDistChart').getContext('2d'),{
+    type:'bar',
+    data:{labels:bLbls,datasets:[
+      {label:'基准（所有日子）',data:hist(af),backgroundColor:'rgba(74,158,255,0.35)',borderWidth:0,borderRadius:3},
+      {label:'TSS超卖触发后', data:hist(tf),backgroundColor:'rgba(243,156,18,0.75)',borderWidth:0,borderRadius:3},
+    ]},
+    options:{responsive:true,plugins:{legend:LEG},scales:{
+      y:{grid:GRID,ticks:TICK},x:{grid:GRID,ticks:{...TICK,maxRotation:0}}
+    }}
+  });
+
+  // 横向对比表
+  renderCompareTable();
+}
+
+async function renderCompareTable(){
+  // 如果部分数据还没加载，只用缓存里的
+  const rows = TICKERS.filter(tk=>tk!=='QQQ').map(tk=>{
+    if(!btCache[tk]) return `<tr onclick="loadBacktest('${tk}')" style="cursor:pointer;"><td><span class="dot" style="background:${COLORS[tk]};"></span><b>${tk}</b></td><td colspan="7" style="color:#555;">点击加载</td></tr>`;
+    const s = btCache[tk].stats_by_year['all'];
+    const t3=s.TSS_buy_3m, t1=s.TSS_buy_1m, t1w=s.TSS_buy_1w;
+    return `<tr onclick="loadBacktest('${tk}')" style="cursor:pointer;">
+      <td><span class="dot" style="background:${COLORS[tk]};"></span><b>${tk}</b> ${NAMES[tk]}</td>
+      <td>${t3.n}</td>
+      <td style="color:${wrClr(t1w.wr)};font-weight:700;">${t1w.wr}%</td><td>${t1w.avg>0?'+':''}${t1w.avg}%</td>
+      <td style="color:${wrClr(t1.wr)};font-weight:700;">${t1.wr}%</td><td>${t1.avg>0?'+':''}${t1.avg}%</td>
+      <td style="color:${wrClr(t3.wr)};font-weight:700;">${t3.wr}%</td><td>${t3.avg>0?'+':''}${t3.avg}%</td>
+    </tr>`;
+  });
+  document.getElementById('cmpBody').innerHTML = rows.join('');
+}
+
+// ── 初始化 tabs ──────────────────────────────────────
+document.getElementById('stkTabs').innerHTML = TICKERS.filter(tk=>tk!=='QQQ').map(tk=>
+  `<div class="stk-tab" data-tk="${tk}" onclick="loadBacktest('${tk}')">${tk}<span style="font-size:10px;font-weight:400;margin-left:4px;">${NAMES[tk]}</span></div>`
+).join('');
+
+// ── 自动加载 ──────────────────────────────────────────
+loadData();
+</script>
+</body>
+</html>
